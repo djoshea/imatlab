@@ -191,7 +191,7 @@ class MatlabKernel(Kernel):
 
         # The debugger may have been set e.g. in startup.m (or later), but it
         # interacts poorly with the engine.
-        self._call("dbclear", "all", nargout=0)
+        #self._call("dbclear", "all", nargout=0)
 
         # Don't include the "Error using eval" before each output.
         # This does not distinguish between `x` and `eval('x')` (with `x`
