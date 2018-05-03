@@ -204,7 +204,11 @@ class MatlabKernel(Kernel):
 
         if os.name == "posix":
             try:
-                self._call("eval", try_code, nargout=0)
+                # call wrapped in try / catch if we're not debugging
+                if self.call("is_dbstop_if_error", nargout=1):
+                    self._call("eval", code, nargout=0)
+                else:
+                    self._call("eval", try_code, nargout=0)
             except (SyntaxError, MatlabExecutionError, KeyboardInterrupt):
                 status = "error"
             except EngineError as engine_error:
@@ -225,10 +229,15 @@ class MatlabKernel(Kernel):
                 else:
                     raise engine_error
         elif os.name == "nt":
+            self._send_stream("running nt\n")
             try:
                 out = StringIO()
                 err = StringIO()
-                self._call("eval", try_code, nargout=0, stdout=out, stderr=err)
+                # call wrapped in try / catch if we're not debugging
+                if self.call("is_dbstop_if_error", nargout=1):
+                    self._call("eval", code, nargout=0, stdout=out, stderr=err)
+                else:
+                    self._call("eval", try_code, nargout=0, stdout=out, stderr=err)
             except (SyntaxError, MatlabExecutionError, KeyboardInterrupt):
                 status = "error"
             finally:
