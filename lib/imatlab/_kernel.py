@@ -205,7 +205,8 @@ class MatlabKernel(Kernel):
         if os.name == "posix":
             try:
                 # call wrapped in try / catch if we're not debugging
-                if self.call("is_dbstop_if_error", nargout=1):
+                isdbg = self._engine.is_dbstop_if_error()
+                if isdbg:
                     self._call("eval", code, nargout=0)
                 else:
                     self._call("eval", try_code, nargout=0)
@@ -234,7 +235,8 @@ class MatlabKernel(Kernel):
                 out = StringIO()
                 err = StringIO()
                 # call wrapped in try / catch if we're not debugging
-                if self.call("is_dbstop_if_error", nargout=1):
+                isdbg = self._engine.is_dbstop_if_error()
+                if isdbg:
                     self._call("eval", code, nargout=0, stdout=out, stderr=err)
                 else:
                     self._call("eval", try_code, nargout=0, stdout=out, stderr=err)

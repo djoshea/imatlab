@@ -22,6 +22,7 @@ setup(
     packages=find_packages("lib"),
     package_dir={"": "lib"},
     package_data={"imatlab": ["resources/imatlab_export_fig.m",
+                              "resources/is_dbstop_if_error.m",
                               "resources/matlab.tpl"]},
     include_package_data=True,
     data_files=DATA_FILES,
