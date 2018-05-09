@@ -166,6 +166,8 @@ class MatlabKernel(Kernel):
             str(Path(sys.modules[__name__.split(".")[0]].__file__).
                 with_name("resources")),
             "-end")
+        # set env var to let Matlab code know its in Jupyter kernel
+        self._engine.setenv("JUPYTER_KERNEL", "imatlab", nargout=0)
 
     def _send_stream(self, stream, text):
         self.send_response(self.iopub_socket,
