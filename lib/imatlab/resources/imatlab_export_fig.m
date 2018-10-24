@@ -16,6 +16,17 @@ function exported = imatlab_export_fig(exporter)
     end
     valid_exporters = {'', 'fig2plotly', 'print-png', 'print-jpeg'};
 
+    % determine real screen DPI
+    screenDPI = getenv('SCREEN_DPI');
+    if ~isempty(screenDPI)
+        screenDPI = str2double(screenDPI);
+    else
+        screenDPI = java.awt.Toolkit.getDefaultToolkit().getScreenResolution();
+    end
+    if isnan(screenDPI)
+        screenDPI = 0;
+    end
+
     if exist('exporter', 'var')
         if strcmp(exporter, '')
             set(0, 'defaultfigurevisible', 'on');
@@ -65,7 +76,7 @@ function exported = imatlab_export_fig(exporter)
                 name = tempname('.');
                 exported{i} = [name, '.png'];
                 % Use screen resolution.
-                print(children(i), exported{i}, '-dpng', '-r0');
+                print(children(i), exported{i}, '-dpng', sprintf('-r%d', screenDPI));
                 close(children(i));
             end
         case 'print-jpeg'
@@ -74,7 +85,7 @@ function exported = imatlab_export_fig(exporter)
                 name = tempname('.');
                 exported{i} = [name, '.jpg'];
                 % Use screen resolution.
-                print(children(i), name, '-djpeg', '-r0');
+                print(children(i), name, '-djpeg', sprintf('-r%d', screenDPI));
                 close(children(i));
             end
         end
