@@ -169,6 +169,11 @@ class MatlabKernel(Kernel):
         # set env var to let Matlab code know its in Jupyter kernel
         self._engine.setenv("JUPYTER_KERNEL", "imatlab", nargout=0)
 
+        try_startup_code = (
+            "try, startupJupyter, catch, end"
+        )
+        self._call("eval", try_startup_code, nargout=0)
+
     def _send_stream(self, stream, text):
         self.send_response(self.iopub_socket,
                            "stream",
@@ -195,21 +200,32 @@ class MatlabKernel(Kernel):
         # interacts poorly with the engine.
         #self._call("dbclear", "all", nargout=0)
 
+        # here we set and then clear an environment variable that indicates the
+        # code is being run within Jupyter (and not the desktop)
+        code_pre = "setenv('JUPYTER_CURRENTLY_EXECUTING', '1');"
+        code_post = "setenv('JUPYTER_CURRENTLY_EXECUTING');"
+
         # Don't include the "Error using eval" before each output.
         # This does not distinguish between `x` and `eval('x')` (with `x`
         # undefined), so a better solution would be preferred.
         try_code = (
-            "try, {code}\n"   # Newline needed as code may end with a comment.
-            r"catch {me}, fprintf('%s\n', {me}.getReport); clear {me}; end;"
-            .format(code=code,
+            "{code_pre} "
+            "try, {code}\n" # Newline needed as code may end with a comment.
+            r"catch {me}; fprintf('%s\n', {me}.getReport); clear {me}; end;"
+            " {code_post}"
+            .format(code=code, code_pre=code_pre, code_post=code_post,
                     me="ME{}".format(str(uuid.uuid4()).replace("-", ""))))
+
+        no_try_code = (
+            "{code_pre} {code}\n {code_post}"
+            .format(code=code, code_pre=code_pre, code_post=code_post))
 
         if os.name == "posix":
             try:
                 # call wrapped in try / catch if we're not debugging
                 isdbg = self._engine.is_dbstop_if_error()
                 if isdbg:
-                    self._call("eval", code, nargout=0)
+                    self._call("eval", no_try_code, nargout=0)
                 else:
                     self._call("eval", try_code, nargout=0)
             except (SyntaxError, MatlabExecutionError, KeyboardInterrupt):
@@ -239,7 +255,7 @@ class MatlabKernel(Kernel):
                 # call wrapped in try / catch if we're not debugging
                 isdbg = self._engine.is_dbstop_if_error()
                 if isdbg:
-                    self._call("eval", code, nargout=0, stdout=out, stderr=err)
+                    self._call("eval", no_try_code, nargout=0, stdout=out, stderr=err)
                 else:
                     self._call("eval", try_code, nargout=0, stdout=out, stderr=err)
             except (SyntaxError, MatlabExecutionError, KeyboardInterrupt):
