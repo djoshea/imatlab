@@ -162,10 +162,11 @@ class MatlabKernel(Kernel):
         else:
             self._engine = matlab.engine.start_matlab()
         self._history = MatlabHistory(Path(self._call("prefdir")))
-        self._engine.addpath(
-            str(Path(sys.modules[__name__.split(".")[0]].__file__).
-                with_name("resources")),
-            "-end")
+
+        resources_path = str(Path(sys.modules[__name__.split(".")[0]].__file__).
+            with_name("res"))
+        self._engine.addpath(resources_path,"-end")
+
         # set env var to let Matlab code know its in Jupyter kernel
         self._engine.setenv("JUPYTER_KERNEL", "imatlab", nargout=0)
 
@@ -224,6 +225,14 @@ class MatlabKernel(Kernel):
             try:
                 # call wrapped in try / catch if we're not debugging
                 isdbg = self._engine.is_dbstop_if_error()
+            except (SyntaxError, MatlabExecutionError, KeyboardInterrupt):
+                isdbg = False
+                resources_path = str(Path(sys.modules[__name__.split(".")[0]].__file__).
+                    with_name("res"))
+                self._send_stream("stderr",
+                    "is_dbstop_if_error.m from imatlab resources folder (%s) is not found on path\n" % (resources_path, ))
+
+            try:
                 if isdbg:
                     self._call("eval", no_try_code, nargout=0)
                 else:
