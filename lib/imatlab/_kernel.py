@@ -203,8 +203,8 @@ class MatlabKernel(Kernel):
 
         # here we set and then clear an environment variable that indicates the
         # code is being run within Jupyter (and not the desktop)
-        code_pre = "setenv('JUPYTER_CURRENTLY_EXECUTING', '1');"
-        code_post = "setenv('JUPYTER_CURRENTLY_EXECUTING');"
+        code_pre = "imatlab_pre_execute();"
+        code_post = "imatlab_post_execute();"
 
         # Don't include the "Error using eval" before each output.
         # This does not distinguish between `x` and `eval('x')` (with `x`
@@ -212,7 +212,7 @@ class MatlabKernel(Kernel):
         try_code = (
             "{code_pre} "
             "try, {code}\n" # Newline needed as code may end with a comment.
-            r"catch {me}; fprintf('%s\n', {me}.getReport); clear {me}; end;"
+            r"catch {me}; fprintf('%s\n', {me}.getReport); clear {me}; {code_post} end;"
             " {code_post}"
             .format(code=code, code_pre=code_pre, code_post=code_post,
                     me="ME{}".format(str(uuid.uuid4()).replace("-", ""))))

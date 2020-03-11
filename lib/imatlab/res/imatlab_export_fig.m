@@ -10,7 +10,7 @@ function exported = imatlab_export_fig(exporter)
     %     orders the current figures by number, exports and closes them, and
     %     returns a cell array of exported filenames.
 
-    persistent set_exporter
+    set_exporter = getenv('IMATLAB_FIGURE_EXPORTER');
     if isempty(set_exporter)
         set_exporter = '';
     end
@@ -28,11 +28,6 @@ function exported = imatlab_export_fig(exporter)
     end
 
     if exist('exporter', 'var')
-        if strcmp(exporter, '')
-            set(0, 'defaultfigurevisible', 'on');
-        else
-            set(0, 'defaultfigurevisible', 'off');
-        end
         if any(strcmp(exporter, valid_exporters))
             if strcmp(exporter, 'fig2plotly')
                 version_delta = ...
@@ -43,6 +38,7 @@ function exported = imatlab_export_fig(exporter)
                 end
             end
             set_exporter = exporter;
+            setenv('IMATLAB_FIGURE_EXPORTER', set_exporter);
         else
             error('imatlab:invalidExporter', ...
                   ['known exporters are ', ...
@@ -53,6 +49,24 @@ function exported = imatlab_export_fig(exporter)
         children = get(0, 'children');
         [~, idx] = sort([children.Number]);
         children = children(idx);
+
+        % ignore figures marked (these were visible before the kernel executed this block of code)
+        mask = true(numel(children), 1);
+        for iF = 1:numel(children)
+            ud = children(iF).UserData;
+            if isstruct(ud)
+                if isfield(ud, 'imatlab_ignore') && ud.imatlab_ignore
+                    mask(iF) = false;
+                    continue;
+                end
+            end
+            if isempty(children(iF).Children)
+                % don't save empty plots, which includes the one created by imatlab_pre_execute
+                mask(iF) = false;
+            end
+        end
+        children = children(mask);
+
         switch set_exporter
         case ''
             exported = {};
