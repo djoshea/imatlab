@@ -337,6 +337,11 @@ class MatlabKernel(Kernel):
                         {"image/jpeg":
                          base64.b64encode(path.read_bytes()).decode("ascii")},
                         {})
+                elif path.suffix.lower() == ".svg":
+                    self._send_display_data(
+                        # Probably should read the encoding from the file.
+                        {"image/svg+xml": path.read_text(encoding="ascii")},
+                        {})
 
     def _plotly_init_notebook_mode(self):
         # Hack into display routine.  Also pretend that the InteractiveShell is

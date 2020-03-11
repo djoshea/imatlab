@@ -14,7 +14,7 @@ function exported = imatlab_export_fig(exporter)
     if isempty(set_exporter)
         set_exporter = '';
     end
-    valid_exporters = {'', 'fig2plotly', 'print-png', 'print-jpeg'};
+    valid_exporters = {'', 'fig2plotly', 'print-png', 'print-jpeg', 'print-svg'};
 
     % determine real screen DPI
     screenDPI = getenv('SCREEN_DPI');
@@ -26,7 +26,8 @@ function exported = imatlab_export_fig(exporter)
     if isnan(screenDPI)
         screenDPI = 0;
     end
-
+%     displayDPI = 72;
+    
     if exist('exporter', 'var')
         if any(strcmp(exporter, valid_exporters))
             if strcmp(exporter, 'fig2plotly')
@@ -91,6 +92,15 @@ function exported = imatlab_export_fig(exporter)
                 exported{i} = [name, '.png'];
                 % Use screen resolution.
                 print(children(i), exported{i}, '-dpng', sprintf('-r%d', screenDPI));
+                close(children(i));
+            end
+        case 'print-svg'
+            exported = cell(1, numel(children));
+            for i = 1:numel(children)
+                name = tempname('.');
+                exported{i} = [name, '.svg'];
+                % Use screen resolution.
+                print(children(i), exported{i}, '-dsvg', sprintf('-r%d', screenDPI));
                 close(children(i));
             end
         case 'print-jpeg'
