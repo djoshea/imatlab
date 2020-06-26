@@ -1,8 +1,9 @@
 {
     "argv": [
-        "python", "-m", "imatlab", "-f", "{connection_file}"],
-    "display_name": "iMatlab",
+        "python", "-m", "imatlabx", "-f", "{connection_file}"],
+    "display_name": "matlab xpra",
     "language": "matlab",
     "mimetype": "text/x-octave",
-    "name": "imatlab"
+    "name": "imatlabx",
+    "env": {"DISPLAY", ":500"}
 }

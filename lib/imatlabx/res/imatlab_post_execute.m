@@ -3,5 +3,5 @@ function imatlab_post_execute()
 
     %fprintf('imatlab_post_execute()\n');
     setenv('JUPYTER_CURRENTLY_EXECUTING');
-    set(0, 'DefaultFigureVisible', 'on');
+    set(groot, 'DefaultFigureVisible', 'on');
 end

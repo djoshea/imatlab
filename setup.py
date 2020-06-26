@@ -2,15 +2,15 @@ import glob
 from setuptools import setup, find_packages
 
 DATA_FILES = [
-    ('share/jupyter/kernels/imatlab/', [ 'kernel.json' ] + glob.glob('*.png')),
+    ('share/jupyter/kernels/imatlabx/', [ 'kernel.json' ] + glob.glob('*.png')),
 ]
 
 setup(
-    name="imatlab",
-    description="A Juyter kernel for MATLAB.",
+    name="imatlabx",
+    description="A Juyter kernel for MATLAB using DISPLAY=:500",
     long_description=open("README.rst", encoding="utf-8").read(),
-    author="Antony Lee",
-    url="https://github.com/imatlab/imatlab",
+    author="Antony Lee + Dan O'Shea",
+    url="https://github.com/djoshea/imatlab",
     license="MIT",
     classifiers=[
         "Framework :: IPython",
@@ -21,7 +21,7 @@ setup(
     ],
     packages=find_packages("lib"),
     package_dir={"": "lib"},
-    package_data={"imatlab": ["res/imatlab_export_fig.m",
+    package_data={"imatlabx": ["res/imatlab_export_fig.m",
                               "res/is_dbstop_if_error.m",
                               "res/matlab.tpl"]},
     include_package_data=True,
@@ -31,7 +31,7 @@ setup(
     use_scm_version=lambda: {  # xref __init__.py
         "version_scheme": "post-release",
         "local_scheme": "node-and-date",
-        "write_to": "lib/imatlab/_version.py",
+        "write_to": "lib/imatlabx/_version.py",
     },
     install_requires=[
         "ipykernel>=4.1",  # Current version of --user install.
@@ -42,7 +42,7 @@ setup(
     ],
     entry_points = {
         "nbconvert.exporters": [
-            "matlab = imatlab._exporter:MatlabExporter",
+            "matlab = imatlabx._exporter:MatlabExporter",
         ],
     },
 )

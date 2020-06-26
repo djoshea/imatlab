@@ -46,15 +46,15 @@ from . import _redirection, __version__
 
 
 # Support `python -mimatlab install`.
-ipykernel.kernelspec.KERNEL_NAME = "imatlab"
+ipykernel.kernelspec.KERNEL_NAME = "imatlabx"
 ipykernel.kernelspec.get_kernel_dict = lambda extra_arguments=None: {
     "argv": [sys.executable,
              "-m", __name__.split(".")[0],
              "-f", "{connection_file}"],
-    "display_name": "MATLAB",
+    "display_name": "MATLAB xpra",
     "language": "matlab",
+    "env": {"DISPLAY": ":500"}
 }
-
 
 class MatlabHistory:
     # The MATLAB GUI relies on `History.xml` (which uses a ridiculously fragile
@@ -128,7 +128,7 @@ class MatlabKernel(Kernel):
             "file_extension": ".m",
             "pygments_lexer": "matlab",
             "codemirror_mode": "octave",
-            "nbconvert_exporter": "imatlab._exporter.MatlabExporter",
+            "nbconvert_exporter": "imatlab-xpra._exporter.MatlabExporter",
         }
 
     def __init__(self, *args, **kwargs):
