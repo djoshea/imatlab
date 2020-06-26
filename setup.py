@@ -7,10 +7,10 @@ DATA_FILES = [
 
 setup(
     name="imatlab",
-    description="A Juyter kernel for MATLAB.",
+    description="A Juyter kernel for MATLAB",
     long_description=open("README.rst", encoding="utf-8").read(),
-    author="Antony Lee",
-    url="https://github.com/imatlab/imatlab",
+    author="Antony Lee + Dan O'Shea",
+    url="https://github.com/djoshea/imatlab",
     license="MIT",
     classifiers=[
         "Framework :: IPython",
