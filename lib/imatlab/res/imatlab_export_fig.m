@@ -26,6 +26,14 @@ function exported = imatlab_export_fig(exporter)
     if isnan(screenDPI)
         screenDPI = 0;
     end
+    
+    scale = getenv('FIGURE_SIZE_SCALE');
+    if isempty(scale)
+        scale = 1;
+    else
+        scale = str2double(scale);
+    end
+    screenDPI = screenDPI / scale;
 %     displayDPI = 72;
     
     if exist('exporter', 'var')
@@ -52,21 +60,33 @@ function exported = imatlab_export_fig(exporter)
         children = children(idx);
 
         % ignore figures marked (these were visible before the kernel executed this block of code)
-        mask = true(numel(children), 1);
+        mask_save = true(numel(children), 1);
+        mask_close = true(numel(children), 1);
         for iF = 1:numel(children)
             ud = children(iF).UserData;
             if isstruct(ud)
                 if isfield(ud, 'imatlab_ignore') && ud.imatlab_ignore
-                    mask(iF) = false;
+                    mask_save(iF) = false;
+                    mask_close(iF) = false;
                     continue;
                 end
             end
             if isempty(children(iF).Children)
                 % don't save empty plots, which includes the one created by imatlab_pre_execute
-                mask(iF) = false;
+                mask_save(iF) = false;
+                mask_close(iF);
             end
         end
-        children = children(mask);
+        
+        % close figures in mask_close but not mask_save
+        for i = 1:numel(children)
+            if mask_close(i) && ~mask_save(i)
+                close(i);
+            end
+        end
+        
+        % now trim to mask_save
+        children = children(mask_save);
 
         switch set_exporter
         case ''
