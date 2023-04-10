@@ -256,22 +256,68 @@ class MatlabKernel(Kernel):
                     self._engine = matlab.engine.start_matlab()
                 else:
                     raise engine_error
+
         elif os.name == "nt":
-            self._send_stream("running nt\n")
+            out = StringIO()
+            err = StringIO()
+                
             try:
-                out = StringIO()
-                err = StringIO()
                 # call wrapped in try / catch if we're not debugging
                 isdbg = self._engine.is_dbstop_if_error()
+            except (SyntaxError, MatlabExecutionError, KeyboardInterrupt):
+                isdbg = False
+                resources_path = str(Path(sys.modules[__name__.split(".")[0]].__file__).
+                    with_name("res"))
+                self._send_stream("stderr",
+                    "is_dbstop_if_error.m from imatlab resources folder (%s) is not found on path\n" % (resources_path, ))
+
+            try:
                 if isdbg:
                     self._call("eval", no_try_code, nargout=0, stdout=out, stderr=err)
                 else:
                     self._call("eval", try_code, nargout=0, stdout=out, stderr=err)
             except (SyntaxError, MatlabExecutionError, KeyboardInterrupt):
                 status = "error"
+            except EngineError as engine_error:
+                # Check whether the engine died.
+                try:
+                    self._call("eval", "1")
+                except EngineError:
+                    self._send_stream(
+                        "stderr",
+                        "Please quit the front-end (Ctrl-D from the console "
+                        "or qtconsole) to shut the kernel down.\n")
+                    # We don't want to GC the engines as that'll lead to an
+                    # attempt to close an already closed MATLAB during
+                    # `__del__`, which raises an uncatchable exception.  So
+                    # we just keep them around instead.
+                    self._dead_engines.append(self._engine)
+                    self._engine = matlab.engine.start_matlab()
+                else:
+                    raise engine_error
             finally:
                 for name, buf in [("stdout", out), ("stderr", err)]:
-                    self._send_stream(name, buf.getvalue())
+                    buf.seek(0, os.SEEK_END)
+                    size = buf.tell()
+                    if size > 0:
+                        self._send_stream(name, buf.getvalue())
+
+        # elif os.name == "nt":
+        #     self._send_stream("running nt\n")
+        #     try:
+        #         out = StringIO()
+        #         err = StringIO()
+        #         # call wrapped in try / catch if we're not debugging
+        #         isdbg = self._engine.is_dbstop_if_error()
+        #         if isdbg:
+        #             self._call("eval", no_try_code, nargout=0, stdout=out, stderr=err)
+        #         else:
+        #             self._call("eval", try_code, nargout=0, stdout=out, stderr=err)
+        #     except (SyntaxError, MatlabExecutionError, KeyboardInterrupt):
+        #         status = "error"
+        #     finally:
+        #         for name, buf in [("stdout", out), ("stderr", err)]:
+        #             self._send_stream(name, buf.getvalue())
         else:
             raise OSError("Unsupported OS")
 

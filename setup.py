@@ -2,7 +2,7 @@ import glob
 from setuptools import setup, find_packages
 
 DATA_FILES = [
-    ('share/jupyter/kernels/imatlab/', [ 'kernel.json' ] + glob.glob('*.png')),
+    ('share/jupyter/kernels/imatlab', [ 'kernel.json' ] + glob.glob('*.png')),
 ]
 
 setup(
@@ -38,7 +38,7 @@ setup(
         "nbconvert>=4.2",  # Exporter API.
         "plotly>=1.13.0",  # First version to test Py3.5.
         "widgetsnbextension>=1.0",  # Anything works.
-        "matlabengineforpython>=R2016b",  # Not PyPI installable.
+        "matlabengine",  # Not PyPI installable.
     ],
     entry_points = {
         "nbconvert.exporters": [
