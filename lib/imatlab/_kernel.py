@@ -47,14 +47,22 @@ from . import _redirection, __version__
 
 # Support `python -mimatlab install`.
 ipykernel.kernelspec.KERNEL_NAME = "imatlab"
-ipykernel.kernelspec.get_kernel_dict = lambda extra_arguments=None: {
+# Changed in newer version
+# ipykernel.kernelspec.get_kernel_dict = lambda extra_arguments=None: {
+#     "argv": [sys.executable,
+#              "-m", __name__.split(".")[0],
+#              "-f", "{connection_file}"],
+#     "display_name": "MATLAB",
+#     "language": "matlab",
+# }
+ipykernel.kernelspec.get_kernel_dict = lambda extra_arguments=None, python_arguments=None: {
     "argv": [sys.executable,
+             "-Xfrozen_modules=off",
              "-m", __name__.split(".")[0],
              "-f", "{connection_file}"],
     "display_name": "MATLAB",
     "language": "matlab",
 }
-
 
 class MatlabHistory:
     # The MATLAB GUI relies on `History.xml` (which uses a ridiculously fragile
