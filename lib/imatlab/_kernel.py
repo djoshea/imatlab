@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 from tempfile import TemporaryDirectory
 import time
 from unittest.mock import patch
@@ -44,6 +45,11 @@ else:
 
 from . import _redirection, __version__
 
+# debugpy.listen(5678) # ensure that this port is the same as the one in your launch.json
+# print("Waiting for debugger attach")
+# debugpy.wait_for_client()
+# debugpy.breakpoint()
+# print('break on this line')
 
 # Support `python -mimatlab install`.
 ipykernel.kernelspec.KERNEL_NAME = "imatlab"
@@ -123,15 +129,19 @@ class MatlabKernel(Kernel):
         """
         return self._engine.builtin(*args, **kwargs)
 
+    def _eval(self, *args, **kwargs):
+        return self._engine.builtin("eval", *args, **kwargs)
+
     @property
     def language_info(self):
         # We also hook this property to `cd` into the current directory if
         # required.
-        if self._call("getenv", "IMATLAB_CD"):
-            self._call("cd", str(Path().resolve()))
+        # if self._call("getenv", "IMATLAB_CD"):
+        #     self._call("cd", str(Path().resolve()))
         return {
             "name": "matlab",
-            "version": self._call("version"),
+            "version": "R2024b",
+            # "version": self._call("version"),
             "mimetype": "text/x-matlab",
             "file_extension": ".m",
             "pygments_lexer": "matlab",
@@ -162,6 +172,8 @@ class MatlabKernel(Kernel):
 
         self._dead_engines = []
         engine_name = os.environ.get("IMATLAB_CONNECT")
+        print("Launching MATLAB")
+        self.log.error("Launching MATLAB engine")
         if engine_name:
             if re.match(r"\A(?a)[a-zA-Z]\w*\Z", engine_name):
                 self._engine = matlab.engine.connect_matlab(engine_name)
@@ -169,11 +181,13 @@ class MatlabKernel(Kernel):
                 self._engine = matlab.engine.connect_matlab()
         else:
             self._engine = matlab.engine.start_matlab()
-        self._history = MatlabHistory(Path(self._call("prefdir")))
+        # self._history = MatlabHistory(Path(self._call("prefdir")))
 
+        self.log.error("Adding resources to MATLAB path")
         resources_path = str(Path(sys.modules[__name__.split(".")[0]].__file__).
             with_name("res"))
         self._engine.addpath(resources_path,"-end")
+        self.log.error("DONE Adding resources to MATLAB path")
 
         # set env var to let Matlab code know its in Jupyter kernel
         self._engine.setenv("JUPYTER_KERNEL", "imatlab", nargout=0)
@@ -181,7 +195,11 @@ class MatlabKernel(Kernel):
         try_startup_code = (
             "try, startupJupyter, catch, end"
         )
+        self.log.error("Running startupJupyter")
         self._call("eval", try_startup_code, nargout=0)
+        self.log.error("DONE Running startupJupyter")
+
+        self._do_execute_first = True
 
     def _send_stream(self, stream, text):
         self.send_response(self.iopub_socket,
@@ -200,9 +218,19 @@ class MatlabKernel(Kernel):
             # Neither of these is supported.
             user_expressions=None, allow_stdin=False):
 
+        if self._do_execute_first:
+            future = self._engine.is_dbstop_if_error(background=True)
+            time.sleep(1)
+            future.cancel()
+
+            self._do_execute_first = False
+
+
+        # self.log.error("Begin do_execute command")
+
         status = "ok"
-        if silent:
-            self._silent = True
+        # if silent:
+        #     self._silent = True
         start = time.perf_counter()
 
         # The debugger may have been set e.g. in startup.m (or later), but it
@@ -331,10 +359,12 @@ class MatlabKernel(Kernel):
 
         self._export_figures()
 
-        if store_history and code:  # Skip empty lines.
-            elapsed = time.perf_counter() - start
-            self._history.append(code, elapsed, status == "ok")
+        # if store_history and code:  # Skip empty lines.
+        #     elapsed = time.perf_counter() - start
+        #     self._history.append(code, elapsed, status == "ok")
         self._silent = False
+
+        # self.log.error("DONE do_execute command")
 
         if status == "ok":
             return {"status": status,
@@ -407,43 +437,33 @@ class MatlabKernel(Kernel):
             plotly.offline.init_notebook_mode()
 
     def do_complete(self, code, cursor_pos):
-        # The following API is only present since MATLAB2016b:
-        #     String com.mathworks.jmi.MatlabMCR.mtGetCompletions(String, int)
-        # (where the second argument is the length of the first) returns a json
-        # string:
-        # { "replacedString": <str>,
-        #   ?"partialCompletion":
-        #       {"completionString": "",
-        #        "offset": 0}
-        #   "finalCompletions":
-        #       [{ "completion":
-        #              { "completionString": <str>,
-        #                "offset": 0 },
-        #          "matchType": <str>,
-        #          "popupCompletion": <str> },
-        #        ...]}
-        # It's not clear whether "completionString" and "popupCompletion" are
-        # ever different.
-        # It is the presence of "replacedString" (or "offset") which makes
-        # this API preferable to the older mtFindAllTabCompletions (used by
-        # matlab_kernel).
-        # Failing modes:
-        #   - "" -> ""
-        #   - "(" -> { "cannotComplete": true}
-        info_s, = self._call(
-            "eval",
-            "cell(com.mathworks.jmi.MatlabMCR().mtGetCompletions('{}', {}))"
-            .format(code[:cursor_pos].replace("'", "''"), cursor_pos))
-        info = json.loads(info_s)
-        if not info or info == {"cannotComplete": True}:
-            info = {"replacedString": "", "finalCompletions": []}
-        return {"status": "ok",
-                "cursor_start": cursor_pos - len(info["replacedString"]),
-                "cursor_end": cursor_pos,
-                "matches": [entry["popupCompletion"]
-                            for entry in info["finalCompletions"]]}
+        code = code[:cursor_pos]
+        reply = {
+            "status": "ok",
+            "cursor_start": cursor_pos,
+            "cursor_end": cursor_pos,
+            "matches": [],
+            "metadata": {},
+        }
 
-    def do_inspect(self, code, cursor_pos, detail_level=0):
+        if cursor_pos > 0:
+            # Use
+            #
+            #     String[] MatlabMCR.mtFindAllTabCompletions(String, int, int)
+            #
+            # This directly returns a list of completions.  It returns the
+            # *previously computed* list of completions for a zero-length
+            # input, so only handle the non-zero length case.
+            completions = self._eval(
+                "cell(com.mathworks.jmi.MatlabMCR().mtFindAllTabCompletions"
+                "('{}', {}, 0))"
+                .format(code.replace("'", "''"), cursor_pos))
+            reply["cursor_start"] -= len(re.search(r"\w*$", code).group())
+            reply["matches"] = completions
+        
+        return reply
+
+    def do_inspect(self, code, cursor_pos, *args, **kwargs):
         try:
             token, = re.findall(r"\b[a-z]\w*(?=\(?\Z)", code[:cursor_pos])
         except ValueError:
@@ -458,39 +478,41 @@ class MatlabKernel(Kernel):
     def do_history(
             self, hist_access_type, output, raw, session=None, start=None,
             stop=None, n=None, pattern=None, unique=False):
-        return {"history": self._history.as_list}
+        # return {"history": self._history.as_list}
+        return {"status": "ok", "history": []}
 
     def do_is_complete(self, code):
-        with TemporaryDirectory() as tmpdir:
-            path = Path(tmpdir, "test_complete.m")
-            path.write_text(code)
-            errs = self._call(
-                "eval",
-                "feval(@(e) {{e.message}}, checkcode('-m2', '{}'))"
-                .format(str(path).replace("'", "''")))
-            # 'Invalid syntax': unmatched brackets.
-            # 'Parse error': unmatched keywords.
-            if any(err.startswith(("Invalid syntax at",
-                                   "Parse error at")) for err in errs):
-                return {"status": "invalid"}
-            # `mtree` returns a single node tree on parse error (but not
-            # otherwise -- empty inputs give no nodes, expressions give two
-            # nodes).  Given that we already excluded (some) errors earlier,
-            # this likely means incomplete code.
-            # Using the (non-documented) `mtree` works better than checking
-            # whether `pcode` successfully generates code as `pcode` refuses
-            # to generate code for classdefs with a name not matching the file
-            # name, whereas we actually want to report `classdef foo, end` to
-            # be reported as complete (so that MATLAB errors at evaluation).
-            incomplete = self._call(
-                "eval",
-                "builtin('numel', mtree('{}', '-file').indices) == 1"
-                .format(str(path).replace("'", "''")))
-            if incomplete:
-                return {"status": "incomplete",
-                        "indent": ""}  # FIXME
-            else:
-                return {"status": "complete"}
+        # with TemporaryDirectory() as tmpdir:
+        #     path = Path(tmpdir, "test_complete.m")
+        #     path.write_text(code)
+        #     errs = self._call(
+        #         "eval",
+        #         "feval(@(e) {{e.message}}, checkcode('-m2', '{}'))"
+        #         .format(str(path).replace("'", "''")))
+        #     # 'Invalid syntax': unmatched brackets.
+        #     # 'Parse error': unmatched keywords.
+        #     if any(err.startswith(("Invalid syntax at",
+        #                            "Parse error at")) for err in errs):
+        #         return {"status": "invalid"}
+        #     # `mtree` returns a single node tree on parse error (but not
+        #     # otherwise -- empty inputs give no nodes, expressions give two
+        #     # nodes).  Given that we already excluded (some) errors earlier,
+        #     # this likely means incomplete code.
+        #     # Using the (non-documented) `mtree` works better than checking
+        #     # whether `pcode` successfully generates code as `pcode` refuses
+        #     # to generate code for classdefs with a name not matching the file
+        #     # name, whereas we actually want to report `classdef foo, end` to
+        #     # be reported as complete (so that MATLAB errors at evaluation).
+        #     incomplete = self._call(
+        #         "eval",
+        #         "builtin('numel', mtree('{}', '-file').indices) == 1"
+        #         .format(str(path).replace("'", "''")))
+        #     if incomplete:
+        #         return {"status": "incomplete",
+        #                 "indent": ""}  # FIXME
+        #     else:
+                # return {"status": "complete"}
+        return {"status": "complete"}
 
     def do_shutdown(self, restart):
         self._call("exit", nargout=0)
