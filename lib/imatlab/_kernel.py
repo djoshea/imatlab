@@ -237,8 +237,22 @@ class MatlabKernel(Kernel):
 
                 except Exception as e:
                     # Probe timed out or failed - MATLAB is busy (likely debugging)
-                    # Continue waiting
                     self._debug(f"Probe failed (MATLAB busy/debugging): {e}")
+
+                    # Check if desktop is visible. If not, show it so user can interact
+                    # with the debugger. This handles the case where code enters debug mode
+                    # but desktop is not visible (either never opened or user closed it).
+                    try:
+                        is_visible = self._engine.is_desktop_visible()
+                        if not is_visible:
+                            self._debug("Desktop not visible, attempting to show it...")
+                            # Call desktop asynchronously - don't wait for it
+                            desktop_future = self._engine.desktop(background=True)
+                            self._debug("Desktop command sent")
+                        else:
+                            self._debug("Desktop is already visible")
+                    except Exception as desktop_err:
+                        self._debug(f"Failed to check/show desktop: {desktop_err}")
                     pass
 
     @property
