@@ -168,6 +168,7 @@ class MatlabKernel(Kernel):
         poll_interval = 0.1  # seconds between done() checks
         probe_interval = 2.0  # seconds between probe attempts
         last_probe_time = time.time()
+        desktop_shown = False  # Track if we've shown desktop during this execution
 
         while True:
             # Check if the main execution completed
@@ -221,6 +222,18 @@ class MatlabKernel(Kernel):
                         self._debug("Checking if still in debug mode...")
                         in_debug = self._engine.is_in_debug_mode()
                         self._debug(f"is_in_debug_mode returned: {in_debug}")
+
+                        if in_debug and not desktop_shown:
+                            # MATLAB is in debug mode - show desktop once so user can interact
+                            desktop_shown = True
+                            try:
+                                self._debug("In debug mode, attempting to show desktop...")
+                                # Call desktop asynchronously with nargout=0 to avoid varargout error
+                                desktop_future = self._engine.desktop(nargout=0, background=True)
+                                self._debug("Desktop command sent")
+                            except Exception as desktop_err:
+                                self._debug(f"Failed to show desktop: {desktop_err}")
+
                         if not in_debug:
                             # Not in debug mode, MATLAB responsive, but future not done
                             # The execution likely completed but future didn't update
@@ -238,21 +251,6 @@ class MatlabKernel(Kernel):
                 except Exception as e:
                     # Probe timed out or failed - MATLAB is busy (likely debugging)
                     self._debug(f"Probe failed (MATLAB busy/debugging): {e}")
-
-                    # Check if desktop is visible. If not, show it so user can interact
-                    # with the debugger. This handles the case where code enters debug mode
-                    # but desktop is not visible (either never opened or user closed it).
-                    try:
-                        is_visible = self._engine.is_desktop_visible()
-                        if not is_visible:
-                            self._debug("Desktop not visible, attempting to show it...")
-                            # Call desktop asynchronously - don't wait for it
-                            desktop_future = self._engine.desktop(background=True)
-                            self._debug("Desktop command sent")
-                        else:
-                            self._debug("Desktop is already visible")
-                    except Exception as desktop_err:
-                        self._debug(f"Failed to check/show desktop: {desktop_err}")
                     pass
 
     @property
