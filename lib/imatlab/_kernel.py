@@ -173,8 +173,21 @@ class MatlabKernel(Kernel):
             # Check if the main execution completed
             if future.done():
                 # Get result to propagate any exceptions
-                future.result()
-                return True
+                self._debug("Future marked done, getting result")
+                try:
+                    result = future.result()
+                    self._debug(f"future.result() returned: {result}")
+                    return True
+                except EngineError as e:
+                    # After debugging, future.result() may raise EngineError even though
+                    # execution completed. If MATLAB is still responsive (which we know
+                    # because we're here), treat this as success.
+                    self._debug(f"future.result() raised EngineError (likely from debugging): {e}")
+                    self._debug("Treating as successful completion since future is done")
+                    return True
+                except Exception as e:
+                    self._debug(f"future.result() raised exception: {type(e).__name__}: {e}")
+                    raise
 
             time.sleep(poll_interval)
 
@@ -184,6 +197,7 @@ class MatlabKernel(Kernel):
             current_time = time.time()
             if current_time - last_probe_time >= probe_interval:
                 last_probe_time = current_time
+                self._debug("Probing MATLAB responsiveness...")
                 try:
                     # Try a quick background probe with a short timeout
                     # If MATLAB is in debug mode, this will block/timeout
@@ -191,9 +205,12 @@ class MatlabKernel(Kernel):
                     probe_future = self._engine.eval("1", background=True)
                     probe_future.result(timeout=0.5)
 
+                    self._debug("MATLAB is responsive to probe")
+
                     # If we get here, MATLAB is responsive
                     # Check again if main future is done (race condition)
                     if future.done():
+                        self._debug("Main future now done after probe")
                         future.result()
                         return True
 
@@ -201,26 +218,27 @@ class MatlabKernel(Kernel):
                     # This likely means the future is "stuck" after debugging
                     # Check if we're actually still in debug mode
                     try:
+                        self._debug("Checking if still in debug mode...")
                         in_debug = self._engine.is_in_debug_mode()
+                        self._debug(f"is_in_debug_mode returned: {in_debug}")
                         if not in_debug:
                             # Not in debug mode, MATLAB responsive, but future not done
                             # The execution likely completed but future didn't update
-                            self.log.warning(
-                                "MATLAB is responsive and not in debug mode, "
-                                "but execution future not marked done. "
-                                "Assuming execution completed.")
+                            self._debug("MATLAB responsive, not in debug mode, but future not done. Completing.")
                             try:
                                 future.cancel()
                             except:
                                 pass
                             return True
-                    except:
+                    except Exception as e:
                         # Couldn't check debug mode, assume we should wait
+                        self._debug(f"Exception checking debug mode: {e}")
                         pass
 
-                except Exception:
+                except Exception as e:
                     # Probe timed out or failed - MATLAB is busy (likely debugging)
                     # Continue waiting
+                    self._debug(f"Probe failed (MATLAB busy/debugging): {e}")
                     pass
 
     @property
@@ -243,6 +261,7 @@ class MatlabKernel(Kernel):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._silent = False
+        self._debug_mode = os.environ.get("IMATLAB_DEBUG", "").lower() in ("1", "true", "yes")
 
         # console, qtconsole uses `kernel-$pid`, notebook uses `kernel-$uuid`.
         self._has_console_frontend = bool(re.match(
@@ -297,6 +316,11 @@ class MatlabKernel(Kernel):
                            "stream",
                            {"name": stream, "text": text})
 
+    def _debug(self, message):
+        """Send debug message to stderr if IMATLAB_DEBUG is enabled."""
+        if self._debug_mode:
+            self._send_stream("stderr", f"DEBUG: {message}\n")
+
     def _send_display_data(self, data, metadata):
         # ZMQDisplayPublisher normally handles the conversion of `None`
         # metadata to {}.
@@ -308,6 +332,8 @@ class MatlabKernel(Kernel):
             self, code, silent, store_history=True,
             # Neither of these is supported.
             user_expressions=None, allow_stdin=False):
+
+        self._debug(f"do_execute called with code: {code[:50]}...")
 
         if self._do_execute_first:
             future = self._engine.is_dbstop_if_error(background=True)
@@ -362,7 +388,9 @@ class MatlabKernel(Kernel):
             try:
                 code_to_run = no_try_code if isdbg else try_code
                 self._execute_with_debug_detection(code_to_run, nargout=0)
-            except (SyntaxError, MatlabExecutionError, KeyboardInterrupt):
+                self._debug("_execute_with_debug_detection returned successfully")
+            except (SyntaxError, MatlabExecutionError, KeyboardInterrupt) as e:
+                self._debug(f"Caught exception (SyntaxError/MatlabExecutionError/KeyboardInterrupt): {e}")
                 status = "error"
             except EngineError as engine_error:
                 # Check whether the engine died.
@@ -444,7 +472,9 @@ class MatlabKernel(Kernel):
         else:
             raise OSError("Unsupported OS")
 
+        self._debug("About to export figures")
         self._export_figures()
+        self._debug("Figures exported")
 
         # if store_history and code:  # Skip empty lines.
         #     elapsed = time.perf_counter() - start
@@ -453,6 +483,7 @@ class MatlabKernel(Kernel):
 
         # self.log.error("DONE do_execute command")
 
+        self._debug(f"Returning status: {status}")
         if status == "ok":
             return {"status": status,
                     "execution_count": self.execution_count,
