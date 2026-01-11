@@ -138,7 +138,7 @@ class MatlabKernel(Kernel):
         kwargs['background'] = True
         return self._engine.builtin(*args, **kwargs)
 
-    def _execute_with_debug_detection(self, code, nargout=0):
+    def _execute_with_debug_detection(self, code, nargout=0, stdout=None, stderr=None):
         """Execute code asynchronously with detection for when debugging completes.
 
         This handles the case where MATLAB enters the debugger during execution.
@@ -146,11 +146,24 @@ class MatlabKernel(Kernel):
         exits (e.g., via dbquit), this method detects that MATLAB is responsive
         again and returns, even if the original Future doesn't properly complete.
 
+        Args:
+            code: MATLAB code to execute
+            nargout: Number of output arguments (default 0)
+            stdout: StringIO for stdout capture (Windows)
+            stderr: StringIO for stderr capture (Windows)
+
         Returns True if execution completed normally, False if there was an error.
         Raises exceptions for engine errors.
         """
+        # Build kwargs for the async call
+        call_kwargs = {'nargout': nargout}
+        if stdout is not None:
+            call_kwargs['stdout'] = stdout
+        if stderr is not None:
+            call_kwargs['stderr'] = stderr
+
         # Execute the code asynchronously
-        future = self._call_async("eval", code, nargout=nargout)
+        future = self._call_async("eval", code, **call_kwargs)
 
         poll_interval = 0.1  # seconds between done() checks
         probe_interval = 2.0  # seconds between probe attempts
@@ -372,7 +385,7 @@ class MatlabKernel(Kernel):
         elif os.name == "nt":
             out = StringIO()
             err = StringIO()
-                
+
             try:
                 # call wrapped in try / catch if we're not debugging
                 isdbg = self._engine.is_dbstop_if_error()
@@ -384,10 +397,8 @@ class MatlabKernel(Kernel):
                     "is_dbstop_if_error.m from imatlab resources folder (%s) is not found on path\n" % (resources_path, ))
 
             try:
-                if isdbg:
-                    self._call("eval", no_try_code, nargout=0, stdout=out, stderr=err)
-                else:
-                    self._call("eval", try_code, nargout=0, stdout=out, stderr=err)
+                code_to_run = no_try_code if isdbg else try_code
+                self._execute_with_debug_detection(code_to_run, nargout=0, stdout=out, stderr=err)
             except (SyntaxError, MatlabExecutionError, KeyboardInterrupt):
                 status = "error"
             except EngineError as engine_error:
