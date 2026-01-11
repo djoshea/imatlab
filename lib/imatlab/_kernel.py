@@ -132,6 +132,84 @@ class MatlabKernel(Kernel):
     def _eval(self, *args, **kwargs):
         return self._engine.builtin("eval", *args, **kwargs)
 
+    def _call_async(self, *args, **kwargs):
+        """Call a MATLAB function asynchronously, returning a Future.
+        """
+        kwargs['background'] = True
+        return self._engine.builtin(*args, **kwargs)
+
+    def _execute_with_debug_detection(self, code, nargout=0):
+        """Execute code asynchronously with detection for when debugging completes.
+
+        This handles the case where MATLAB enters the debugger during execution.
+        When the user interacts with the debugger via MATLAB Desktop and then
+        exits (e.g., via dbquit), this method detects that MATLAB is responsive
+        again and returns, even if the original Future doesn't properly complete.
+
+        Returns True if execution completed normally, False if there was an error.
+        Raises exceptions for engine errors.
+        """
+        # Execute the code asynchronously
+        future = self._call_async("eval", code, nargout=nargout)
+
+        poll_interval = 0.1  # seconds between done() checks
+        probe_interval = 2.0  # seconds between probe attempts
+        last_probe_time = time.time()
+
+        while True:
+            # Check if the main execution completed
+            if future.done():
+                # Get result to propagate any exceptions
+                future.result()
+                return True
+
+            time.sleep(poll_interval)
+
+            # Periodically try to probe MATLAB to see if it's responsive
+            # This handles the case where the user exits the debugger but
+            # the Future doesn't properly complete
+            current_time = time.time()
+            if current_time - last_probe_time >= probe_interval:
+                last_probe_time = current_time
+                try:
+                    # Try a quick background probe with a short timeout
+                    # If MATLAB is in debug mode, this will block/timeout
+                    # If MATLAB is responsive, this will complete quickly
+                    probe_future = self._engine.eval("1", background=True)
+                    probe_future.result(timeout=0.5)
+
+                    # If we get here, MATLAB is responsive
+                    # Check again if main future is done (race condition)
+                    if future.done():
+                        future.result()
+                        return True
+
+                    # MATLAB is responsive but main future isn't done
+                    # This likely means the future is "stuck" after debugging
+                    # Check if we're actually still in debug mode
+                    try:
+                        in_debug = self._engine.is_in_debug_mode()
+                        if not in_debug:
+                            # Not in debug mode, MATLAB responsive, but future not done
+                            # The execution likely completed but future didn't update
+                            self.log.warning(
+                                "MATLAB is responsive and not in debug mode, "
+                                "but execution future not marked done. "
+                                "Assuming execution completed.")
+                            try:
+                                future.cancel()
+                            except:
+                                pass
+                            return True
+                    except:
+                        # Couldn't check debug mode, assume we should wait
+                        pass
+
+                except Exception:
+                    # Probe timed out or failed - MATLAB is busy (likely debugging)
+                    # Continue waiting
+                    pass
+
     @property
     def language_info(self):
         # We also hook this property to `cd` into the current directory if
@@ -269,10 +347,8 @@ class MatlabKernel(Kernel):
                     "is_dbstop_if_error.m from imatlab resources folder (%s) is not found on path\n" % (resources_path, ))
 
             try:
-                if isdbg:
-                    self._call("eval", no_try_code, nargout=0)
-                else:
-                    self._call("eval", try_code, nargout=0)
+                code_to_run = no_try_code if isdbg else try_code
+                self._execute_with_debug_detection(code_to_run, nargout=0)
             except (SyntaxError, MatlabExecutionError, KeyboardInterrupt):
                 status = "error"
             except EngineError as engine_error:
