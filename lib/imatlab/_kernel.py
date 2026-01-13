@@ -7,6 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from tempfile import TemporaryDirectory
 import time
@@ -44,6 +45,7 @@ else:
         "plotly output is unavailable.")
 
 from . import _redirection, __version__
+from ._language_server import LanguageServerManager
 
 # debugpy.listen(5678) # ensure that this port is the same as the one in your launch.json
 # print("Waiting for debugger attach")
@@ -321,6 +323,46 @@ class MatlabKernel(Kernel):
         self._call("eval", try_startup_code, nargout=0)
         self.log.error("DONE Running startupJupyter")
 
+        # Create a temporary directory for inline function definitions
+        # This directory persists for the lifetime of the kernel
+        self._temp_func_dir = tempfile.mkdtemp(prefix="imatlab_funcs_")
+        self.log.error(f"Created temp function directory: {self._temp_func_dir}")
+        self._debug(f"Function storage directory: {self._temp_func_dir}")
+
+        # Add the temp directory to MATLAB's path so functions are accessible
+        self._engine.addpath(self._temp_func_dir, "-begin", nargout=0)
+        self.log.error("Added temp function directory to MATLAB path")
+
+        # Initialize the MATLAB Language Server for function extraction
+        self._language_server = None
+        try:
+            self.log.error("=== Starting MATLAB Language Server initialization ===")
+            self._debug("Creating LanguageServerManager...")
+
+            # Create a callback that sends LSP logs to cell output via _debug
+            def lsp_log_callback(message):
+                # Send to both cell output and Jupyter logs
+                if self._debug_mode:
+                    self._send_stream("stderr", f"DEBUG: {message}\n")
+                self.log.error(message)
+
+            ls_manager = LanguageServerManager(log_callback=lsp_log_callback)
+            self._debug("Testing LSP callback...")
+            lsp_log_callback("TEST: LSP callback is working!")
+            self._debug("Calling ls_manager.start()...")
+            if ls_manager.start():
+                self._language_server = ls_manager
+                self.log.error("=== MATLAB Language Server initialized successfully ===")
+                self._debug("Language server is ready")
+            else:
+                self.log.error("=== WARNING: Could not start MATLAB Language Server ===")
+                self.log.error("Inline function definitions will not work.")
+        except Exception as e:
+            self.log.error(f"=== ERROR: Failed to initialize MATLAB Language Server: {e} ===")
+            import traceback
+            self.log.error(traceback.format_exc())
+            self._language_server = None
+
         self._do_execute_first = True
 
     def _send_stream(self, stream, text):
@@ -332,6 +374,58 @@ class MatlabKernel(Kernel):
         """Send debug message to stderr if IMATLAB_DEBUG is enabled."""
         if self._debug_mode:
             self._send_stream("stderr", f"DEBUG: {message}\n")
+
+    def _extract_functions(self, code):
+        """Extract outer function definitions from MATLAB code using mtree.
+
+        Uses MATLAB's built-in mtree parser to robustly parse the code and extract
+        function definitions.
+
+        Args:
+            code: String containing MATLAB code
+
+        Returns:
+            Tuple of (remaining_code, functions, error_msg) where:
+            - remaining_code: Code with function definitions removed
+            - functions: List of (function_name, function_code) tuples
+            - error_msg: Error message string if parsing failed, None otherwise
+        """
+        try:
+            self._debug("Calling MATLAB imatlab_extract_functions...")
+
+            # Call the MATLAB helper function
+            result = self._engine.imatlab_extract_functions(code, nargout=4)
+
+            # result is a tuple: (functionNames, functionCodes, remainingCode, errorMsg)
+            func_names = result[0]  # Cell array of function names
+            func_codes = result[1]  # Cell array of function code strings
+            remaining_code = result[2]  # Remaining code string
+            error_msg = result[3]  # Error message (empty string if no error)
+
+            # Check for syntax error
+            if error_msg and error_msg.strip():
+                self._debug(f"Syntax error detected: {error_msg}")
+                return code, [], error_msg
+
+            # Convert MATLAB cell arrays to Python lists
+            functions = []
+            if func_names is not None and len(func_names) > 0:
+                for i in range(len(func_names)):
+                    func_name = func_names[i]
+                    func_code = func_codes[i]
+                    functions.append((func_name, func_code))
+                    self._debug(f"Extracted function: {func_name}")
+
+            self._debug(f"imatlab_extract_functions found {len(functions)} function(s)")
+
+            return remaining_code, functions, None
+
+        except Exception as e:
+            self._debug(f"Error extracting functions with mtree: {e}")
+            import traceback
+            self._debug(traceback.format_exc())
+            # Fall back to returning original code with no functions
+            return code, [], None
 
     def _send_display_data(self, data, metadata):
         # ZMQDisplayPublisher normally handles the conversion of `None`
@@ -345,15 +439,46 @@ class MatlabKernel(Kernel):
             # Neither of these is supported.
             user_expressions=None, allow_stdin=False):
 
-        self._debug(f"do_execute called with code: {code[:50]}...")
+        self._debug(f"do_execute called with code: {code[:50]}... [v16-clean]")
 
         if self._do_execute_first:
+            self._debug("Running first execute setup...")
             future = self._engine.is_dbstop_if_error(background=True)
             time.sleep(1)
             future.cancel()
-
             self._do_execute_first = False
+            self._debug("First execute setup complete")
 
+        # Extract and save any function definitions before executing
+        self._debug("About to call _extract_functions...")
+        remaining_code, functions, error_msg = self._extract_functions(code)
+        self._debug(f"_extract_functions returned: {len(functions)} functions")
+
+        # Check if there was a syntax error during parsing
+        if error_msg:
+            self._debug("Syntax error detected, aborting execution")
+            self._send_stream("stderr", f"\n{error_msg}\n")
+            return {"status": "error",
+                    "execution_count": self.execution_count,
+                    "ename": "SyntaxError",
+                    "evalue": "Failed to parse cell code",
+                    "traceback": [error_msg]}
+
+        if len(functions) > 0:
+            self._debug(f"Extracted {len(functions)} function(s) from cell")
+            for func_name, func_code in functions:
+                # Write function to .m file in temp directory
+                func_file_path = os.path.join(self._temp_func_dir, f"{func_name}.m")
+                try:
+                    with open(func_file_path, 'w') as f:
+                        f.write(func_code)
+                    self._debug(f"Saved function {func_name} to {func_file_path}")
+                except Exception as e:
+                    self._debug(f"ERROR: Failed to save function {func_name}: {e}")
+
+            # Use the remaining code (without function definitions) for execution
+            code = remaining_code
+            self._debug(f"Remaining code after function extraction: {code[:100]}...")
 
         # self.log.error("Begin do_execute command")
 
@@ -645,6 +770,39 @@ class MatlabKernel(Kernel):
         return {"status": "complete"}
 
     def do_shutdown(self, restart):
+        # Stop the language server
+        if hasattr(self, '_language_server') and self._language_server is not None:
+            try:
+                self._language_server.stop()
+                self.log.error("Language server stopped")
+            except Exception as e:
+                self.log.error(f"Failed to stop language server: {e}")
+
+        # Clean up temporary function directory
+        import shutil
+        if hasattr(self, '_temp_func_dir') and os.path.exists(self._temp_func_dir):
+            try:
+                shutil.rmtree(self._temp_func_dir)
+                self.log.error(f"Cleaned up temp function directory: {self._temp_func_dir}")
+            except Exception as e:
+                self.log.error(f"Failed to clean up temp function directory: {e}")
+
         self._call("exit", nargout=0)
         if restart:
             self._engine = matlab.engine.start_matlab()
+            # Recreate temp directory after restart
+            self._temp_func_dir = tempfile.mkdtemp(prefix="imatlab_funcs_")
+            self._engine.addpath(self._temp_func_dir, "-begin", nargout=0)
+            # Restart language server
+            try:
+                def lsp_log_callback(message):
+                    if self._debug_mode:
+                        self._send_stream("stderr", f"DEBUG: {message}\n")
+                    self.log.error(message)
+
+                ls_manager = LanguageServerManager(log_callback=lsp_log_callback)
+                if ls_manager.start():
+                    self._language_server = ls_manager
+            except Exception as e:
+                self.log.error(f"Failed to restart language server: {e}")
+                self._language_server = None
