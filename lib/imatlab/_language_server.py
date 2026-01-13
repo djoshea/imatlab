@@ -506,6 +506,90 @@ class LanguageServerManager:
                 except Exception as e:
                     self._log(f"get_document_symbols: Failed to clean up temp file: {e}")
 
+    def get_completions(self, code: str, line: int, character: int, uri: str = None) -> Optional[List[Dict]]:
+        """Get completions from the language server.
+
+        Args:
+            code: MATLAB code to analyze
+            line: Line number (0-indexed)
+            character: Character position in line (0-indexed)
+            uri: Document URI (if None, a temp file will be created)
+
+        Returns:
+            List of completion items or None if failed
+        """
+        self._log(f"get_completions: line={line}, char={character}")
+
+        if not self._initialized:
+            self._log("ERROR: Language server not initialized")
+            return None
+
+        # Create a temporary file for the code
+        import tempfile
+        temp_file = None
+        try:
+            # Create temp file with .m extension
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.m', delete=False) as f:
+                temp_file = f.name
+                f.write(code)
+
+            # Convert to file:// URI
+            from pathlib import Path
+            file_uri = Path(temp_file).as_uri()
+            self._log(f"get_completions: Created temp file: {file_uri}")
+
+            # Send textDocument/didOpen notification
+            self._log("get_completions: Sending textDocument/didOpen...")
+            self._send_notification("textDocument/didOpen", {
+                "textDocument": {
+                    "uri": file_uri,
+                    "languageId": "matlab",
+                    "version": 1,
+                    "text": code
+                }
+            })
+
+            # Give server a moment to process
+            time.sleep(0.5)
+
+            # Drain any pending notifications
+            self._drain_notifications(max_wait=0.5)
+
+            # Request completions
+            self._log("get_completions: Sending textDocument/completion request...")
+            response = self._send_request("textDocument/completion", {
+                "textDocument": {
+                    "uri": file_uri
+                },
+                "position": {
+                    "line": line,
+                    "character": character
+                }
+            }, timeout=5)
+            self._log(f"get_completions: Response received: {response is not None}")
+
+            # Close the document
+            self._send_notification("textDocument/didClose", {
+                "textDocument": {
+                    "uri": file_uri
+                }
+            })
+
+            return response
+
+        except Exception as e:
+            self._log(f"ERROR: Failed to get completions: {e}")
+            import traceback
+            self._log(traceback.format_exc())
+            return None
+        finally:
+            # Clean up temp file
+            if temp_file and os.path.exists(temp_file):
+                try:
+                    os.unlink(temp_file)
+                except Exception as e:
+                    self._log(f"Failed to clean up temp file: {e}")
+
     def stop(self):
         """Stop the language server process."""
         if self._server_process is None:
