@@ -45,7 +45,6 @@ else:
         "plotly output is unavailable.")
 
 from . import _redirection, __version__
-from ._language_server import LanguageServerManager
 
 # debugpy.listen(5678) # ensure that this port is the same as the one in your launch.json
 # print("Waiting for debugger attach")
@@ -333,40 +332,7 @@ class MatlabKernel(Kernel):
         self._engine.addpath(self._temp_func_dir, "-begin", nargout=0)
         self.log.error("Added temp function directory to MATLAB path")
 
-        # Initialize the MATLAB Language Server for function extraction
-        self._language_server = None
-        try:
-            self.log.error("=== Starting MATLAB Language Server initialization ===")
-            self._debug("Creating LanguageServerManager...")
-
-            # Create a callback that sends LSP logs to cell output via _debug
-            def lsp_log_callback(message):
-                # Send to both cell output and Jupyter logs
-                if self._debug_mode:
-                    self._send_stream("stderr", f"DEBUG: {message}\n")
-                self.log.error(message)
-
-            ls_manager = LanguageServerManager(log_callback=lsp_log_callback)
-            self._debug("Testing LSP callback...")
-            lsp_log_callback("TEST: LSP callback is working!")
-            self._debug("Calling ls_manager.start()...")
-            if ls_manager.start():
-                self._language_server = ls_manager
-                self.log.error("=== MATLAB Language Server initialized successfully ===")
-                self._debug("Language server is ready")
-            else:
-                self.log.error("=== WARNING: Could not start MATLAB Language Server ===")
-                self.log.error("Inline function definitions will not work.")
-        except Exception as e:
-            self.log.error(f"=== ERROR: Failed to initialize MATLAB Language Server: {e} ===")
-            import traceback
-            self.log.error(traceback.format_exc())
-            self._language_server = None
-
         self._do_execute_first = True
-
-        # Queue for storing debug messages from completion requests
-        self._completion_debug_queue = []
 
     def _send_stream(self, stream, text):
         self.send_response(self.iopub_socket,
@@ -377,11 +343,6 @@ class MatlabKernel(Kernel):
         """Send debug message to stderr if IMATLAB_DEBUG is enabled."""
         if self._debug_mode:
             self._send_stream("stderr", f"DEBUG: {message}\n")
-
-    def _debug_completion(self, message):
-        """Queue a debug message from completion request to be shown on next execution."""
-        if self._debug_mode:
-            self._completion_debug_queue.append(f"COMPLETION: {message}")
 
     def _extract_functions(self, code):
         """Extract outer function definitions from MATLAB code using mtree.
@@ -447,15 +408,7 @@ class MatlabKernel(Kernel):
             # Neither of these is supported.
             user_expressions=None, allow_stdin=False):
 
-        self._debug(f"do_execute called with code: {code[:50]}... [v17-completion-debug]")
-
-        # Flush any queued completion debug messages
-        if self._completion_debug_queue:
-            self._send_stream("stderr", "=== Completion Debug Messages ===\n")
-            for msg in self._completion_debug_queue:
-                self._send_stream("stderr", f"  {msg}\n")
-            self._send_stream("stderr", "=== End Completion Debug ===\n\n")
-            self._completion_debug_queue.clear()
+        self._debug(f"do_execute called with code: {code[:50]}...")
 
         if self._do_execute_first:
             self._debug("Running first execute setup...")
@@ -708,8 +661,6 @@ class MatlabKernel(Kernel):
             plotly.offline.init_notebook_mode()
 
     def do_complete(self, code, cursor_pos):
-        self._debug_completion(f"do_complete called: cursor_pos={cursor_pos}, code length={len(code)}")
-
         code = code[:cursor_pos]
         reply = {
             "status": "ok",
@@ -720,65 +671,9 @@ class MatlabKernel(Kernel):
         }
 
         if cursor_pos > 0:
-            # Try LSP completions first if available
-            if self._language_server is not None:
-                try:
-                    self._debug_completion("Attempting LSP completion...")
-
-                    # Convert cursor position to line/character
-                    lines = code.split('\n')
-                    line = len(lines) - 1
-                    character = len(lines[-1])
-
-                    self._debug_completion(f"LSP position: line={line}, char={character}")
-
-                    # Get completions from LSP
-                    lsp_result = self._language_server.get_completions(code, line, character)
-
-                    if lsp_result is not None:
-                        self._debug_completion(f"LSP returned result: {type(lsp_result)}")
-
-                        # LSP can return either a list or a CompletionList object
-                        items = []
-                        if isinstance(lsp_result, dict) and 'items' in lsp_result:
-                            items = lsp_result['items']
-                        elif isinstance(lsp_result, list):
-                            items = lsp_result
-
-                        if items:
-                            self._debug_completion(f"LSP returned {len(items)} completion items")
-                            # Extract completion text from LSP items
-                            # LSP completion items have 'label' and optionally 'insertText'
-                            matches = []
-                            for item in items:
-                                if isinstance(item, dict):
-                                    # Prefer insertText over label
-                                    text = item.get('insertText', item.get('label', ''))
-                                    if text:
-                                        matches.append(text)
-
-                            if matches:
-                                reply["matches"] = matches
-                                # Calculate cursor_start based on the trigger word
-                                reply["cursor_start"] -= len(re.search(r"\w*$", code).group())
-                                self._debug_completion(f"Returning {len(matches)} LSP completions")
-                                return reply
-
-                        self._debug_completion("LSP returned no items, falling back to MATLAB")
-                    else:
-                        self._debug_completion("LSP returned None, falling back to MATLAB")
-
-                except Exception as e:
-                    self._debug_completion(f"LSP completion failed: {e}, falling back to MATLAB")
-                    import traceback
-                    self._debug_completion(traceback.format_exc())
-
-            # Fallback to MATLAB's built-in completion
-            self._debug_completion("Using MATLAB built-in completion")
             try:
-                # Use
-                #
-                #     String[] MatlabMCR.mtFindAllTabCompletions(String, int, int)
+                # Use MATLAB's built-in tab completion:
+                # String[] MatlabMCR.mtFindAllTabCompletions(String, int, int)
                 #
                 # This directly returns a list of completions.  It returns the
                 # *previously computed* list of completions for a zero-length
@@ -789,9 +684,9 @@ class MatlabKernel(Kernel):
                     .format(code.replace("'", "''"), cursor_pos))
                 reply["cursor_start"] -= len(re.search(r"\w*$", code).group())
                 reply["matches"] = completions
-                self._debug_completion(f"MATLAB returned {len(completions)} completions")
             except Exception as e:
-                self._debug_completion(f"MATLAB completion also failed: {e}")
+                # Silently ignore completion errors
+                pass
 
         return reply
 
@@ -847,14 +742,6 @@ class MatlabKernel(Kernel):
         return {"status": "complete"}
 
     def do_shutdown(self, restart):
-        # Stop the language server
-        if hasattr(self, '_language_server') and self._language_server is not None:
-            try:
-                self._language_server.stop()
-                self.log.error("Language server stopped")
-            except Exception as e:
-                self.log.error(f"Failed to stop language server: {e}")
-
         # Clean up temporary function directory
         import shutil
         if hasattr(self, '_temp_func_dir') and os.path.exists(self._temp_func_dir):
@@ -870,16 +757,3 @@ class MatlabKernel(Kernel):
             # Recreate temp directory after restart
             self._temp_func_dir = tempfile.mkdtemp(prefix="imatlab_funcs_")
             self._engine.addpath(self._temp_func_dir, "-begin", nargout=0)
-            # Restart language server
-            try:
-                def lsp_log_callback(message):
-                    if self._debug_mode:
-                        self._send_stream("stderr", f"DEBUG: {message}\n")
-                    self.log.error(message)
-
-                ls_manager = LanguageServerManager(log_callback=lsp_log_callback)
-                if ls_manager.start():
-                    self._language_server = ls_manager
-            except Exception as e:
-                self.log.error(f"Failed to restart language server: {e}")
-                self._language_server = None
